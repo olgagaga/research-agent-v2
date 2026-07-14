@@ -1,0 +1,22 @@
+[project]
+name = "autoresearch"
+version = "0.1.0"
+description = "Cheap LLM-driven ML optimization agent (orchestrator env)"
+readme = "README.md"
+requires-python = ">=3.10"
+# Orchestrator dependencies only — the agent itself needs no ML stack.
+# The training environment lives in model_dir/ with its own pyproject.
+dependencies = [
+    "openai>=1.40",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+# Future experiment-tracking backend — install with: uv sync --extra clearml
+clearml = ["clearml>=1.16"]
+
+[tool.uv]
+package = false

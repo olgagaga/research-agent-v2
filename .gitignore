@@ -1,0 +1,35 @@
+# === Secrets — NEVER commit ===
+.env
+.env.*
+!.env.example
+**/.env
+agent/.env
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# === model_dir runtime (it is its own git repo at runtime) ===
+model_dir/.git/
+model_dir/.gitbak/
+model_dir/runs/
+model_dir/logs.md
+model_dir/.venv/
+model_dir/__pycache__/
+model_dir/dashboard*.html
+
+# === Generated artifacts (regenerate with `python dashboard.py`) ===
+/dashboard.html
+/dashboard-demo.html
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# NOTE: history/ (the durable run archive) IS committed on purpose — it's the
+# research record. Remove the next line to stop tracking it if it grows large.
+# history/

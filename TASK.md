@@ -1,0 +1,133 @@
+Here is a detailed technical specification designed directly for a coding agent. You can copy and paste this entire document to your agent to guide the implementation.
+
+---
+
+# Technical Specification: LLM-Driven Optimization Agent
+
+**Objective:** Implement a Python orchestrator script that autonomously optimizes a machine learning segmentation model by interfacing with OpenAI, ClearML, Git, and local file systems.
+
+**Note**: This project utilize UV. Use it for package managment
+
+## 1. Environment & Architecture Architecture
+
+The project must strictly separate the orchestrator environment from the model execution environment.
+
+* **Agent Directory (`agent_dir/`):** Contains the orchestrator code, OpenAI API wrappers, and the state machine loop.
+* **Model Directory (`model_dir/`):** Contains the mutable codebase (`model.py`, `loss.py`, `optimizer.py`, `transforms.py`, `preprocs.py`, `transforms.yaml`), a virtual environment (`.venv`), and the `logs.md` file.
+* **Execution Rule:** All model executions must be triggered from inside `model_dir` using its specific virtual environment.
+* **Execution Command:** `python oct/run.py experiment=agent_baseline`
+
+## 2. Open AI Structured Output Schema (Atomic Mutations)
+
+Use OpenAI's `pydantic` Structured Outputs to enforce atomic mutations. The agent must choose *one* target to mutate per loop. `transforms.py`, `preprocs.py`, and `transforms.yaml` are considered a single tandem target.
+
+```python
+from pydantic import BaseModel, Field
+
+class Mutation(BaseModel):
+    file_name: str = Field(description="Name of the file to mutate.")
+    new_code: str = Field(description="The complete new code/text for the file.")
+
+class ExperimentPlan(BaseModel):
+    reasoning: str = Field(description="Step-by-step reasoning for the proposed changes.")
+    short_description: str = Field(description="1-2 sentences describing the experiment.")
+    mutations: list[Mutation] = Field(description="List of file mutations.")
+
+```
+
+* **Validation Logic:** Before applying changes, the Python orchestrator must validate the `mutations` list. If the list contains `model.py` alongside `loss.py`, the orchestrator must reject it and prompt the LLM to provide a single atomic change.
+
+## 3. ClearML Data Retrieval
+
+To evaluate runs and build the context prompt, retrieve metrics using the ClearML SDK.
+
+* **Test Data IDs:** Use `c86c0fe7af78403da21dc13ec4eff489` to test successful data retrieval, and `186b9a48a0d4431e841e8b0c6d09743c` to test the crashed run logic.
+
+**Implementation Snippet for the Agent:**
+
+```python
+from clearml import Task
+
+def fetch_clearml_data(task_id: str):
+    task = Task.get_task(task_id=task_id)
+    
+    # 1. Retrieve and filter scalars
+    raw_scalars = task.get_reported_scalars()
+    filtered_scalars = {
+        metric: values 
+        for metric, values in raw_scalars.items() 
+        if metric != "summary"
+    }
+    
+    # 2. Retrieve additional metrics/tables
+    plots = task.get_reported_plots()
+    
+    return filtered_scalars, plots
+
+```
+
+## 4. State Management (`logs.md`)
+
+The `logs.md` file acts as the long-term memory for the LLM. Append a new entry after every resolved execution cycle.
+
+**Required Fields for Every Entry:**
+
+* **Experiment Description:** (From the LLM `short_description`).
+* **Reasoning Summary:** (A brief summary of the LLM `reasoning`).
+* **Status:** Must be exactly one of the following strings:
+* `statistically better`: Score improved by 3% or more over the previous best.
+* `better`: Score improved by less than 3%.
+* `lower`: Score decreased by less than 3%.
+* `statistically lower`: Score decreased by 3% or more.
+* `crushed`: Run failed/crashed twice in a row.
+
+
+
+## 5. Crash Handling & Context Logic
+
+Errors are managed via a two-strike system tracked by the Python orchestrator. Track the number of consecutive crashes for the current experiment vector.
+
+* **Strike 1 (First Crash):** * Do NOT clear the LLM context.
+* Extract the Python traceback from `stderr`.
+* Feed the raw traceback directly back into the LLM as a user message: "The previous code resulted in this traceback: [traceback]. Fix the errors."
+
+
+* **Strike 2 (Second Consecutive Crash):** * Trigger the `on crash route`.
+* Clear the LLM conversation context.
+* Append an entry to `logs.md` marking the status as `crushed`.
+* Trigger the Git discard protocol (revert to the last successful baseline).
+* Reset the crash counter.
+
+
+
+## 6. Git Protocol
+
+The workspace is already on an isolated experimental branch. Strict Git state management is required to prevent code degradation.
+
+* **On Success (`statistically better` or `better`):**
+* Execute `git add .`
+* Execute `git commit -m "[LLM short_description]"`
+* Execute `git push origin HEAD`
+
+
+* **On Failure (`lower`, `statistically lower`, or `crushed`):**
+* Execute `git reset --hard HEAD` to restore tracked files to the last successful state.
+* Execute `git clean -fd` to remove any untracked artifacts generated by the failed run.
+
+
+
+## 7. The Main Execution Loop
+
+The orchestrator must follow this exact synchronous loop:
+
+1. Read the wiki, allowed mutable files, `logs.md`, and the current state.
+2. Call the OpenAI API with the structured schema.
+3. Validate atomic mutations. (If invalid, retry LLM call).
+4. Apply file changes to `model_dir/`.
+5. Execute the training subprocess: `subprocess.run(["python", "oct/run.py", "experiment=agent_baseline"], cwd="model_dir", capture_output=True, text=True)`.
+6. Catch subprocess exit codes. If `!= 0`, trigger Crash Handling (Section 5).
+7. If successful (`== 0`), fetch ClearML data (Section 3).
+8. Calculate the score delta against the best previous score.
+9. Execute Git Protocol (Section 6) based on the score delta.
+10. Append the result to `logs.md` with the exact status string.
+11. Reset crash counter (if applicable), update the best score (if applicable), and loop back to Step 1.

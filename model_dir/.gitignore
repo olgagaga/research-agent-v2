@@ -1,0 +1,6 @@
+.venv/
+runs/
+__pycache__/
+*.pyc
+# Agent memory — must survive `git clean -fd` on failed experiments.
+logs.md

@@ -1,0 +1,24 @@
+[project]
+name = "autoresearch-model"
+version = "0.1.0"
+description = "Training environment for the autoresearch agent (mammography task)"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.2",
+    "scikit-learn>=1.4",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+]
+
+# CPU-only torch wheels — this task is tiny and runs in seconds on CPU.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv]
+package = false

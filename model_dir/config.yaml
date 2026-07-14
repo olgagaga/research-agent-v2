@@ -1,0 +1,3 @@
+epochs: 120
+batch_size: 64
+seed: 0
