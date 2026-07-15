@@ -9,14 +9,23 @@ append-only — see §Data).
 
 ## Headline results (keep current)
 
-| Task | Model | Baseline | Best (agent) | Cost | Notes |
-|------|-------|----------|--------------|------|-------|
-| Mammography rare-event (AUPRC, ~2.3% pos) | gpt-5-mini | 0.32 (naive prevalence 0.023) | **0.747** (7-exp demo) / **~0.789** (12-exp run) | $0.024 / ~$0.10 | surgical AST edits; 5–7 kept, 2–5 reverted |
+**All numbers are 10-seed replays (`replay.py`), not single runs.** Single-seed
+scores on this task are not reportable — see the 2026-07-15 entry.
+
+| Task | Model | Baseline (10 seeds) | Best (agent, 10 seeds) | Cost | Notes |
+|------|-------|--------------|--------------|------|-------|
+| Mammography rare-event (AUPRC, ~2.3% pos) | gpt-5-mini | val **0.363 ± 0.219** · test **0.249 ± 0.159** | val **0.774 ± 0.011** · test **0.650 ± 0.023** (peak, step 6) | ~$0.10 | 9 kept commits, of which **3 are real improvements** and 6 are noise |
 
 **One-liner for the paper:** a cheap (~$0.02–0.10/run) LLM agent, editing code via
-surgical AST ops on a fixed harness, autonomously lifts val/AUPRC on an imbalanced
-medical-detection task from a 0.32 baseline to ~0.75–0.79 in ~10 experiments,
-keeping good changes as git commits and reverting regressions.
+surgical AST ops on a fixed harness, lifts **held-out** AUPRC on an imbalanced
+medical-detection task from 0.25 to 0.65 — but reaches that ceiling in **3 real
+experiments**, and spends the remaining ~40% of its budget committing noise,
+because its keep/revert rule fires at `Δ > 0` on a single-seed estimate whose
+σ ≈ 0.015.
+
+**Do not quote:** "0.32 baseline", "0.32 → 0.789", or the 3-agent "loss lever
+dominates" result. All three are single-seed artifacts; the 2026-07-15 entry
+records why.
 
 ---
 
@@ -157,11 +166,82 @@ keeping good changes as git commits and reverting regressions.
   precisely because the data layer was already clean (JSONL archive), which is the
   real lesson: **stable data contract first, presentation is then disposable.**
 
+### 2026-07-15 — `replay.py`: the noise floor, and what it invalidates
+Built **`replay.py`** — a measurement instrument, not an agent: **no LLM calls**,
+$0 per run. It re-runs each commit of a trajectory under R fresh seeds with the
+**harness pinned** to the working tree (run.py/data.py copied into throwaway
+worktrees) and **only the agent-editable seams swapped per commit**, so every step
+is scored by byte-identical evaluation code. Two harness changes made it possible:
+`SEED` env override (the seed lives in `config.yaml`, an agent-editable seam —
+also a latent reward-hacking surface) and `*_final` metrics alongside the
+best-epoch ones, to separate epoch-selection from split offset.
+
+First full replay: **11 commits × 10 seeds = 110 runs, 6 minutes, $0, 0 failures.**
+
+**1. The baseline is not a number, it's a distribution.** The identical baseline
+commit over 10 seeds: `0.046 0.116 0.208 0.235 0.324 0.329 0.518 0.574 0.608
+0.676` → **0.363 ± 0.219**. The "0.32" quoted everywhere was one draw. Past the
+baseline the pipeline stabilises: σ ≈ 0.015 (steps 2–10), σ ≈ 0.012 at plateau.
+
+**2. The val→test gap is NOT the agent overfitting.** The hypothesis going in was
+that hill-climbing on val inflates the self-report. Wrong: the **baseline already
+has a +0.115 gap**, and drift across the whole trajectory is **+0.009 ± 0.086**
+(flat). The ~0.12 offset is a property of this split — val is simply easier than
+test. The agent's gains genuinely transfer: **test 0.249 → 0.650**. Only *drift*
+would have been attributable to the agent, and there is none.
+
+**3. The real problem: 7 of 10 kept experiments are noise.** `_classify` labels at
+±3% but `_SUCCESS = {statistically better, better}` — so the **commit boundary is
+`improve > 0`**, on a single seed. `STATISTICAL_DELTA` never gates anything. With
+σ ≈ 0.015 a truly neutral edit is committed ~50% of the time and the incumbent
+only ratchets *up* on val. Replaying the agent's own comparison at n=10:
+
+  | step | Δ vs incumbent | verdict | edit |
+  |---:|---:|:--|:--|
+  | 2 | +0.328 ± 0.069 | **REAL** | class-weighted BCE |
+  | 4 | +0.042 ± 0.009 | **REAL** | deeper/wider MLP |
+  | 6 | +0.024 ± 0.006 | **REAL** | epochs 120, batch 64 |
+  | 3, 5 | +0.000, +0.017 | noise | standardisation; AdamW+cosine |
+  | 7, 8, 9, 10 | −0.008, −0.005, −0.002, −0.000 | noise | four `loss.py` tweaks |
+
+  **All real progress is done by step 6.** Steps 7–10 — the last four experiments,
+  every one a loss tweak, each paying an LLM call — have uniformly *negative* point
+  estimates. On held-out data the agent **walked away from its best pipeline**:
+  test peak **0.6597 @ step 6** vs final **0.6498 @ step 10**.
+
+**4. This falsifies the 2026-07-15 population finding above.** "Loss lever
+dominates" rested on agent_01 (architecture-only) scoring 0.407 vs 0.693/0.679.
+Those agents started **from the baseline**, where σ = 0.219 and the seed range is
+0.046–0.676 — 0.407 sits inside the baseline's own noise. And 0.693 vs 0.679 is
+noise outright. **Retracted.** Worse, best-of-N *selects the max of N noisy draws*,
+so `parallel.py`'s leaderboard is biased upward by construction: population winners
+must be re-measured under fresh seeds before they mean anything.
+
+**Takeaway (and the paper's likely contribution).** Training costs 4 s; an LLM call
+costs ~$0.008. Compute is ~free relative to the model, yet the loop spends its
+whole evaluation budget on one seed and then makes an irreversible commit decision
+from it. *In cheap-task autoresearch the binding constraint is evaluation variance,
+not model quality* — so spend compute on variance reduction, not more LLM calls.
+Seed-averaging R=5 costs 20 s and cuts SE 0.015 → 0.0067, enough to make steps
+7–10 visibly not-improvements. Directly testable at fixed LLM budget (RESEARCH.md
+§4 "Reliability").
+
+**Lesson, generalised:** we ran ~10 agent sessions and wrote three findings into
+this notebook before ever measuring σ. Two of the three did not survive contact
+with it. The noise floor is not an optional refinement — it is the unit every
+other claim is denominated in, and it cost $0 and 6 minutes to obtain.
+
 ---
 
 ## Open threads
 See `RESEARCH.md` for the full backlog. Near-term:
-- §3 done (v1) — now run the equal-budget best-of-N vs single comparison.
-- §3 extension: breed a 2nd generation from the top-2 pipelines.
+- **Fix the loop's decision rule** (from `replay.py`): R-seed averaged evaluation
+  + a real commit gate (Δ > k·SE, not Δ > 0). Then R=1 vs R=5 at equal LLM budget.
+- **Stopping**: the agent plateaued at step 6 and paid for 4 more experiments. Can
+  a variance-aware loop detect the plateau and halt? ($ saved at equal held-out.)
+- **Re-measure the population run** under fresh seeds; quantify best-of-N's
+  selection bias before scaling to N=8.
+- §3 equal-budget best-of-N vs single — now interpretable, since σ is known.
 - §5 benchmark vs Sakana AI-Scientist (v2's tree search ≈ our population search).
-- Point per-run dashboard at a chosen session; add best-of-N over wall-clock.
+- **N=1 task is the paper's biggest exposure** — every agent-level claim is
+  currently confounded with mammography. `replay.py` is already task-agnostic.

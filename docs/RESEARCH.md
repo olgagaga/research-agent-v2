@@ -74,10 +74,21 @@ pluggable interface as ClearML.
 
 > **Status: implemented (v1) in `parallel.py`.** N agents, git worktrees,
 > process-per-agent, per-agent durable archives, live leaderboard, and a
-> a Population view in the dashboard app (per-agent curves + best-of-N). First run
-> (3×2 from baseline) already showed the loss lever dominating on this
-> imbalanced task — see `LAB_NOTEBOOK.md`. Still TODO: the equal-budget
-> best-of-N vs single comparison, and breeding a 2nd generation from the top-2.
+> a Population view in the dashboard app (per-agent curves + best-of-N).
+>
+> ⚠️ **The first result from it is RETRACTED.** The 3×2 run was read as "the loss
+> lever dominates" (agent_01, architecture-only, scored 0.407 vs 0.693/0.679).
+> `replay.py` later measured the baseline at **0.363 ± 0.219** — those agents
+> started there, so 0.407 is inside the baseline's own noise, and 0.693 vs 0.679
+> is noise outright. See `LAB_NOTEBOOK.md` 2026-07-15.
+>
+> **Methodological consequence for this whole section:** best-of-N **selects the
+> max of N noisy draws**, so the leaderboard's winning score is biased upward by
+> construction, and the bias *grows with N* — which is exactly the direction that
+> would fake a "breadth beats depth" result. Any best-of-N comparison must
+> re-measure the winner under fresh seeds (`replay.py --commits <sha>`) and report
+> *that*, never the selection-time score. Still TODO: the equal-budget best-of-N
+> vs single comparison, and breeding a 2nd generation from the top-2.
 
 **Idea:** spawn ~10 agents on the *same* task at once, each in its own git
 worktree, and compare. Turns the single greedy hill-climb into a **population
@@ -112,7 +123,45 @@ so 10× parallel is feasible on this 22-core box. Watch the LLM rate limit, not 
 
 ## 4. Broader research questions
 
-Grouped by what they probe. Each is a runnable experiment with this harness.
+Grouped by what they probe. Each is a runnable experiment with this harness —
+**once §6 (experimental apparatus) exists**; today the system records what it did
+but not what it *was*, so no A/B below is actually decidable yet.
+
+**Evaluation variance & the decision rule** ← *highest priority; σ measured 2026-07-15*
+
+`replay.py` established the numbers these questions turn on: σ ≈ 0.015 at plateau
+(σ = 0.219 at the baseline), the commit boundary is `improve > 0` on a **single
+seed**, and 7 of 10 kept experiments were noise. The governing asymmetry: a
+training run costs **4 s of CPU**, an LLM call costs **~$0.008** — compute is
+essentially free relative to the model, yet 100% of the evaluation budget goes to
+one seed and an irreversible commit decision is made from it.
+
+- **R-seed averaged evaluation.** R=1 vs R=5 at *equal LLM budget* (same number of
+  experiments) → held-out score. R=5 costs +16 s/experiment and cuts SE 0.015 →
+  0.0067. H1: R=5 wins, because the ratchet stops locking in noise.
+- **A real commit gate.** Commit iff Δ > k·SE (k ≈ 2) vs the current Δ > 0. H2:
+  the zero-margin ratchet is *why* steps 7–10 happened; a gate makes them reverts.
+  Note this also converts `STATISTICAL_DELTA` from a cosmetic label into a knob.
+- **Knowing when to stop.** The agent plateaued at step 6 and paid for 4 more
+  experiments (~40% of spend, ≈0 gain, slightly *worse* held-out). Can a
+  variance-aware loop detect its own plateau and halt? Measure: $ saved at equal
+  held-out score. This is a capability claim, not a hyperparameter.
+- **Does the LLM know it's noise?** The archive stores `reasoning` next to
+  outcome. Do the agent's stated hypotheses predict REAL vs noise better than
+  chance? If not, that bounds what better prompting can ever buy.
+- **Cost of the noise floor itself.** σ scales with val-set positives (~51 here).
+  Bigger val / k-fold CV as the agent's signal vs seed-averaging: which buys more
+  decision quality per CPU-second?
+
+**Controls (without these, "the agent works" is unfalsifiable)**
+- **Random-edit arm.** Pick a random lever, apply a random edit from a fixed menu,
+  same budget. With only 4 levers and one dominant (loss), random may do
+  embarrassingly well — and 3 real improvements in 10 tries is a low bar to beat.
+- **Ceiling reference.** A tuned `HistGradientBoostingClassifier` on the same
+  split. We have a floor (0.363 val / 0.249 test) but **no ceiling**, so 0.774 /
+  0.650 has no scale. Needed to normalise across tasks:
+  `headroom captured = (agent_test − baseline_test) / (ceiling_test − baseline_test)`
+  — held-out, task-agnostic, and divisible by $ for the cost claim.
 
 **Search strategy**
 - Greedy hill-climb (now) vs population (§3) vs MCTS/beam over the edit tree?
@@ -140,10 +189,22 @@ Grouped by what they probe. Each is a runnable experiment with this harness.
 - Regression / multiclass / true rare-disease sets — does the loop hold up?
 
 **Reliability & honesty**
-- Overfitting the val split: gap between agent's val score and a held-out test
-  (or Kaggle late-submission) score. How often does "better" not generalize?
+- ~~Overfitting the val split~~ **— answered (2026-07-15), and the answer was no.**
+  The val→test gap is ~0.12 but it is a **fixed offset of this split**, present at
+  the baseline: drift over the trajectory = +0.009 ± 0.086. The agent's gains
+  transfer (test 0.249 → 0.650). Still open on *other* tasks, and still open for
+  best-of-N, where selection pressure is much stronger than in a single chain.
+- **How often does "better" not generalize? — 7 of 10 kept experiments.** Not via
+  val-overfitting, though: via *noise*. See the evaluation-variance group above.
+- ~~Reproducibility: variance across seeds~~ **— measured.** σ ≈ 0.015 at plateau;
+  σ = 0.219 at the baseline (range 0.046–0.676 over 10 seeds). Any claim on this
+  task must carry error bars this wide. `replay.py` is the instrument.
 - Reward hacking: does the agent ever game the metric (e.g. degenerate configs)?
-- Reproducibility: variance of the same task across seeds.
+  **A live surface exists:** `seed` lives in `config.yaml`, an agent-editable seam
+  — tuning it is pure metric-hacking with zero generalization. Never observed yet
+  (checked the archive + git history); `SEED` env now overrides it during replay,
+  but the agent can still edit it during a normal run. Worth leaving in place and
+  watching, since "does it find the hack?" is itself a finding.
 
 **Autonomy**
 - Let the agent also edit its own *search policy* / prompt (meta-level)?
@@ -191,7 +252,50 @@ generalization gap (val vs held-out, §2).
 tabular task needs a shim. Both are open-source but run LLM-generated code — use
 their containerization. Check licenses before reusing code.
 
-## 6. Logistics / caveats
+## 6. Experimental apparatus — what must exist before §4 is runnable
+
+*Object of study = the agent. The dataset is only the instrument.* Every question
+in §4 has the form **"does system variant A beat variant B?"** — and the system
+currently cannot answer *any* of them, not for lack of ideas but for lack of
+apparatus. The gaps, in dependency order:
+
+1. **Run-config record.** The archive records what the agent *did*, never what the
+   agent *was* (model, effort, edit mode, context window, commit gate, R, search
+   policy, seed). Two sessions are therefore **not comparable**, so no §4 question
+   is decidable today. → snapshot the resolved config into the session header;
+   tag every record with a `variant` label.
+2. **Repeat trials.** One run per config. LLM sampling is stochastic, so a single
+   trajectory is an anecdote — the same σ lesson §4 applies to *scores* applies to
+   the agent's own *outcome*. → N trials per variant; report distributions, never
+   points.
+3. **Baseline controls.** No non-LLM arm and no ceiling (both named in §4). Both
+   need the same loop with a **swappable proposer**. → a `Proposer` interface
+   (`llm` | `random` | `scripted`), so the random-edit arm is a config value rather
+   than a fork of the codebase.
+4. **Sweep harness.** `parallel.py` runs N agents at **one** config. → a grid
+   runner: `config × trials` at equal budget, reusing the existing worktree
+   isolation. (`parallel.py` is ~80% of this already.)
+5. **Cross-run analytics.** `agent/analytics.py` is per-session. → aggregate and
+   compare *variants* (mean ± σ of held-out score, $/experiment, headroom
+   captured).
+
+Structural blockers behind those:
+
+6. **The task is hardcoded into the system** — `TARGET_GROUPS`, `ALLOWED_FILES`,
+   the lever list baked into the system prompt, the wiki path. §4's "task
+   generalization", §1's Kaggle sets, and §5's benchmark **cannot start** until a
+   task is *data* (a task spec: working dir, levers, metric+direction, contracts,
+   briefing) rather than code. Biggest architectural debt in the repo.
+7. **Integrity guard.** Nothing verifies the fixed harness is untouched. §4 already
+   names a live hacking surface (`seed` inside the agent-editable `config.yaml`).
+   → hash-guard `run.py`/`data.py` each iteration + assert held-out signal never
+   enters the agent's context. Makes "did it cheat?" *checkable* rather than
+   assumed.
+
+**Order:** (1)+(2) unlock everything · (3) makes the claims falsifiable · (4)+(5)
+make sweeps cheap · (6) unlocks §1/§4-generalization/§5 · (7) protects the record.
+
+## 7. Logistics / caveats
 - Local CV is the optimization signal; Kaggle test is a rare final check (§2).
 - Verify late-submission availability per competition (code comps differ).
 - Kaggle API needs `~/.kaggle/kaggle.json` creds; respect each comp's rules on
