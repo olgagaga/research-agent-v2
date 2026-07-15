@@ -218,6 +218,13 @@ def build_context(
         {"role": "user", "content": f"# Experiment history\n\n{_log_memory()}"}
     )
 
+    # Per-agent exploration nudge (diversifies a population of agents).
+    if config.AGENT_HINT:
+        messages.append({
+            "role": "user",
+            "content": f"# Exploration focus for this agent\n{config.AGENT_HINT}",
+        })
+
     if feedback:
         messages.append({"role": "user", "content": feedback})
 
@@ -298,8 +305,9 @@ def run_loop(
     archive = RunArchive(
         config.ARCHIVE_DIR, session, model=config.LLM_MODEL,
         task=f"{config.TARGET_METRIC} ({config.TARGET_DIRECTION}) on {md.name}",
+        agent=config.AGENT_LABEL,
     )
-    log.info("Archiving to %s (session %s)", archive.jsonl, session)
+    log.info("Archiving to %s (session %s, agent %s)", archive.jsonl, session, config.AGENT_LABEL)
 
     # --- cost accounting -----------------------------------------------------
     # `pending_*` accumulate spend since the last logged experiment (so LLM

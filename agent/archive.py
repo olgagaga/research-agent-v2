@@ -31,18 +31,25 @@ log = logging.getLogger(__name__)
 
 
 def new_session_id() -> str:
-    """A sortable, unique-per-run session id, e.g. ``20260714T230501Z``."""
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    """A sortable, ~unique session id, e.g. ``20260714T230501Z-a1b2``.
+
+    The random suffix prevents collisions when several agents in a population
+    start within the same second.
+    """
+    import uuid
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:4]
 
 
 class RunArchive:
     """Append-only writer for experiment records."""
 
-    def __init__(self, root: Path, session: str, model: str = "", task: str = ""):
+    def __init__(self, root: Path, session: str, model: str = "", task: str = "",
+                 agent: str = "solo"):
         self.root = Path(root)
         self.session = session
         self.model = model
         self.task = task
+        self.agent = agent
         self.root.mkdir(parents=True, exist_ok=True)
         self.jsonl = self.root / "experiments.jsonl"
         # Per-session metadata file (human-scannable index of sessions).
@@ -52,6 +59,7 @@ class RunArchive:
         idx = self.root / "sessions.jsonl"
         rec = {
             "session": self.session,
+            "agent": self.agent,
             "started": datetime.now(timezone.utc).isoformat(),
             "model": self.model,
             "task": self.task,
@@ -66,6 +74,7 @@ class RunArchive:
         """Append one experiment record. Never raises into the caller."""
         full = {
             "session": self.session,
+            "agent": self.agent,
             "ts": datetime.now(timezone.utc).isoformat(),
             "model": self.model,
             **rec,

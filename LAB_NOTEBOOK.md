@@ -93,10 +93,47 @@ keeping good changes as git commits and reverting regressions.
   the debugging substrate. Rejected/crashed attempts are the most informative
   records; never discard them.
 
+### 2026-07-15 — Population search: N agents in parallel worktrees (RESEARCH.md §3)
+- **Built `parallel.py`** — runs N agents on the same task simultaneously, each
+  isolated, then keeps the best. Design decisions:
+  - **Isolation via git worktrees:** each agent = a worktree of `model_dir` on
+    its own branch. Shared object store (cheap), separate working tree + commits
+    (no collisions). Verified worktree add/remove leaves `model_dir` HEAD intact.
+  - **Process-per-agent:** config is process-global (paths derive from `MODEL_DIR`
+    env), so each agent is a separate `main.py` process with its own `MODEL_DIR`
+    + `AUTORESEARCH_HISTORY`. Clean boundary, no config refactor.
+  - **Per-agent archives:** each writes its own `experiments.jsonl` (a shared
+    file would corrupt under concurrent >4 KB appends — POSIX only guarantees
+    atomicity below PIPE_BUF).
+  - **Diversity:** per-agent `REASONING_EFFORT` + an `AGENT_HINT` nudge injected
+    into the prompt ("prioritise the loss", "…architecture", …). Session ids got
+    a random suffix to avoid same-second collisions.
+- **Tracking:** live leaderboard polls each agent's archive; on finish writes
+  `leaderboard.json` + merged `all_experiments.jsonl`. New dashboard mode
+  `dashboard.py --parallel <run>` overlays per-agent best-so-far curves + the
+  **best-of-N** population curve + a ranked leaderboard.
+- **First result (3 agents × 2 iters from baseline, $0.019):**
+
+  | agent | focus (hint) | effort | best val/AUPRC |
+  |-------|--------------|--------|----------------|
+  | agent_00 | loss / imbalance | low | **0.693** |
+  | agent_02 | optimiser / LR | low | 0.679 |
+  | agent_01 | architecture only | medium | 0.407 |
+
+  **Finding:** on this imbalanced task the **loss lever dominates** — the agent
+  steered to architecture-only (a1) barely moved off the baseline, while the
+  loss- and optimiser-focused agents nearly doubled AUPRC in 2 experiments. The
+  population makes lever-importance legible in a way a single trajectory can't.
+- **Caveats / next:** the real test is **best-of-N vs a single agent at equal
+  total budget** (does breadth beat depth?), plus a "breed from top-2" second
+  round. Also: 2 iters is too few to conclude — scale to N=8 × 10 iters. LLM rate
+  limit (not CPU) is the binding constraint at higher N.
+
 ---
 
 ## Open threads
 See `RESEARCH.md` for the full backlog. Near-term:
-- Rebuild the lost 12-exp log from terminal scrollback if still available.
-- Point `dashboard.py` at `history/` (durable) instead of `logs.md` (ephemeral).
-- §3 parallel agents in worktrees; §5 benchmark vs Sakana AI-Scientist.
+- §3 done (v1) — now run the equal-budget best-of-N vs single comparison.
+- §3 extension: breed a 2nd generation from the top-2 pipelines.
+- §5 benchmark vs Sakana AI-Scientist (v2's tree search ≈ our population search).
+- Point per-run dashboard at a chosen session; add best-of-N over wall-clock.

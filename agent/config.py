@@ -73,6 +73,13 @@ STATISTICAL_DELTA = float(os.environ.get("STATISTICAL_DELTA", "0.03"))  # 3 %
 
 LLM_MODEL = os.environ.get("MAIN_MODEL", "anthropic/claude-sonnet-4.6")
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "medium")
+
+# --- multi-agent identity (used when running a population of agents) --------
+# Label distinguishing this agent in a parallel run (appears in the archive).
+AGENT_LABEL = os.environ.get("AGENT_LABEL", "solo")
+# Optional exploration nudge injected into the prompt to diversify the
+# population (e.g. "prioritise loss-function changes"). Empty = no nudge.
+AGENT_HINT = os.environ.get("AGENT_HINT", "")
 MAX_VALIDATION_RETRIES = int(os.environ.get("MAX_VALIDATION_RETRIES", "3"))
 
 # Cap how much conversation history we carry — token-cost control.  Older

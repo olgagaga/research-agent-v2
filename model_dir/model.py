@@ -37,4 +37,7 @@ class MLP(nn.Module):
 
 
 def build_model(n_features: int) -> nn.Module:
-    return MLP(n_features, hidden=64, hidden2=32, dropout=0.2)
+    # Slightly larger MLP: increase capacity to capture more complex
+    # interactions among the six input features, while keeping LayerNorm and
+    # modest dropout for regularisation.
+    return MLP(n_features, hidden=128, hidden2=64, dropout=0.1)

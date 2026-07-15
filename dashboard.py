@@ -528,12 +528,255 @@ def render(data: dict, fragment: bool = False) -> str:
     inner = f"<style>{_STYLE}</style>\n{_BODY}\n<script>{script}</script>"
     if fragment:
         return inner
+    return _wrap(inner)
+
+
+def _wrap(inner: str, title: str = "Autoresearch · Run Telemetry") -> str:
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<title>Autoresearch · Run Telemetry</title></head><body>"
-        f"{inner}</body></html>"
+        f"<title>{title}</title></head><body>{inner}</body></html>"
     )
+
+
+# =========================================================================
+# Parallel (population) view — one line per agent + best-of-N
+# =========================================================================
+
+# Categorical hues for agents (fixed order, distinct in light & dark).
+_AGENT_HUES = ["#4c9be8", "#e8804c", "#3ec98a", "#c264d6",
+               "#e0b13a", "#e8607a", "#5ec5c0", "#9a86e0",
+               "#7bbf3a", "#d98cc0"]
+
+
+def collect_parallel(run_dir: Path) -> dict:
+    """Aggregate a parallel run directory into per-agent trajectories."""
+    run_dir = Path(run_dir)
+    lb_path = run_dir / "leaderboard.json"
+    leaderboard = json.loads(lb_path.read_text()) if lb_path.exists() else {}
+    direction = leaderboard.get("direction", config.TARGET_DIRECTION)
+
+    # Prefer per-agent archives (live-safe); fall back to merged file.
+    archive_root = run_dir / "archives"
+    by_agent: dict[str, list] = {}
+    if archive_root.exists():
+        for adir in sorted(archive_root.glob("agent_*")):
+            recs = []
+            f = adir / "experiments.jsonl"
+            if f.exists():
+                for line in f.read_text().splitlines():
+                    if line.strip():
+                        try:
+                            recs.append(json.loads(line))
+                        except Exception:
+                            pass
+            by_agent[adir.name] = recs
+
+    agents = []
+    pop_curve, best_overall = [], None
+    for i, (name, recs) in enumerate(sorted(by_agent.items())):
+        scored = [r for r in recs if r.get("score") is not None]
+        pts, best = [], None
+        for k, r in enumerate(scored, 1):
+            s = r["score"]
+            best = s if best is None else (max(best, s) if direction == "max" else min(best, s))
+            pts.append([k, best])
+        cost = sum(float(r.get("cost") or 0.0) for r in recs)
+        kept = sum(1 for r in scored if r.get("kept"))
+        hint = next((r.get("_hint") for r in recs if r.get("_hint")), "")
+        agents.append({
+            "label": name, "color": _AGENT_HUES[i % len(_AGENT_HUES)],
+            "points": pts, "best": best, "done": len(scored),
+            "attempts": len(recs), "kept": kept, "cost": round(cost, 6),
+            "effort": (recs[0].get("effort") if recs else None),
+        })
+        if best is not None and (best_overall is None or
+                                 (best > best_overall if direction == "max" else best < best_overall)):
+            best_overall = best
+
+    # Population best-of-N over experiment index k.
+    maxlen = max((len(a["points"]) for a in agents), default=0)
+    running = None
+    for k in range(1, maxlen + 1):
+        vals = [a["points"][k - 1][1] for a in agents if len(a["points"]) >= k]
+        if not vals:
+            continue
+        cand = max(vals) if direction == "max" else min(vals)
+        running = cand if running is None else (max(running, cand) if direction == "max" else min(running, cand))
+        pop_curve.append([k, running])
+
+    # merge leaderboard hint/effort into agents when present
+    lb = {b["agent"]: b for b in leaderboard.get("leaderboard", [])}
+    for a in agents:
+        if a["label"] in lb:
+            a["hint"] = lb[a["label"]].get("hint", "")
+            a["effort"] = lb[a["label"]].get("effort", a["effort"])
+
+    return {
+        "meta": {"metric": leaderboard.get("metric", config.TARGET_METRIC),
+                 "direction": direction, "run": run_dir.name,
+                 "n_agents": len(agents),
+                 "total_cost": round(sum(a["cost"] for a in agents), 6),
+                 "best": best_overall},
+        "agents": agents, "population": pop_curve,
+    }
+
+
+def render_parallel(data: dict) -> str:
+    body = _PARALLEL_BODY
+    script = _PARALLEL_SCRIPT.replace("__DATA__", json.dumps(data))
+    inner = f"<style>{_STYLE}{_PARALLEL_STYLE}</style>\n{body}\n<script>{script}</script>"
+    return _wrap(inner, title="Autoresearch · Population Run")
+
+
+_PARALLEL_STYLE = """
+.board td.agentcell{display:flex;align-items:center;gap:8px}
+.swatch-sq{width:11px;height:11px;border-radius:3px;flex:none}
+.winner{color:var(--good);font-weight:700}
+.legend-wrap{display:flex;flex-wrap:wrap;gap:14px;margin:10px 2px}
+"""
+
+_PARALLEL_BODY = """
+<div class="wrap">
+  <header class="top">
+    <div>
+      <p class="eyebrow">Autoresearch · Population Run</p>
+      <h1>N agents, one task</h1>
+      <p class="sub">Run <b id="p-run" class="mono"></b> · maximize <b id="p-metric" class="mono"></b>
+        · <b id="p-n"></b> agents in isolated worktrees<br>
+        <span id="p-src" style="font-size:11.5px;color:var(--faint)"></span></p>
+    </div>
+    <button class="toggle" id="themeBtn"><span id="themeTxt">Theme</span></button>
+  </header>
+
+  <section class="kpis" id="p-kpis"></section>
+
+  <section class="card hero">
+    <h2>Optimization progress — per agent + best-of-N</h2>
+    <p class="cardsub">Each line is one agent's best <span class="mono" id="p-metric2"></span> so far;
+      the bold line is the population best across all agents.</p>
+    <div class="hero-figure mono"><span id="p-best">—</span></div>
+    <div class="delta mono" id="p-winner"></div>
+    <div id="popChart"></div>
+    <div class="legend-wrap" id="p-legend"></div>
+  </section>
+
+  <section class="card" style="padding-bottom:6px">
+    <h2>Leaderboard</h2>
+    <p class="cardsub">Ranked by best metric</p>
+    <div class="tablewrap">
+      <table class="board"><thead><tr>
+        <th>Agent</th><th>Effort</th><th>Focus (hint)</th><th class="num">Best</th>
+        <th class="num">Done</th><th class="num">Kept</th><th class="num">Attempts</th><th class="num">Cost</th>
+      </tr></thead><tbody id="p-body"></tbody></table>
+    </div>
+  </section>
+  <footer>Population run · autoresearch agent</footer>
+</div>
+<div class="tip" id="tip"></div>
+"""
+
+_PARALLEL_SCRIPT = """
+const DATA=__DATA__;
+const $=s=>document.querySelector(s);
+const cvar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt=(v,d=4)=>v==null?"—":(+v).toFixed(d);
+const NS="http://www.w3.org/2000/svg";
+function el(n,a={}){const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;}
+const tip=$("#tip");
+function showTip(h,x,y){tip.innerHTML=h;tip.style.opacity=1;const w=tip.offsetWidth,ht=tip.offsetHeight;
+  tip.style.left=Math.min(x+14,innerWidth-w-8)+"px";tip.style.top=Math.max(y-ht-10,8)+"px";}
+function hideTip(){tip.style.opacity=0;}
+
+function meta(){
+  const m=DATA.meta;
+  $("#p-run").textContent=m.run; $("#p-metric").textContent=m.metric;
+  $("#p-metric2").textContent=m.metric; $("#p-n").textContent=m.n_agents;
+  $("#p-best").textContent=fmt(m.best);
+  $("#p-src").textContent="source: per-agent durable archives";
+  const winner=DATA.agents.slice().sort((a,b)=>(b.best??-1)-(a.best??-1))[0];
+  if(winner&&winner.best!=null) $("#p-winner").innerHTML=
+    `<span class="winner">▲ ${winner.label}</span> <span style="color:var(--muted)">leads at ${fmt(winner.best)}</span>`;
+  const tot=m.total_cost;
+  const done=DATA.agents.reduce((s,a)=>s+a.done,0);
+  const kept=DATA.agents.reduce((s,a)=>s+a.kept,0);
+  const k=[["Best "+m.metric,fmt(m.best),"across all agents"],
+    ["Agents",m.n_agents,"parallel worktrees"],
+    ["Experiments",done,kept+" kept total"],
+    ["Total spend","$"+fmt(tot,4),"all agents"]];
+  $("#p-kpis").innerHTML=k.map(([l,v,n])=>`<div class="kpi"><div class="label">${l}</div><div class="val mono">${v}</div><div class="note">${n}</div></div>`).join("");
+}
+
+function legend(){
+  $("#p-legend").innerHTML=DATA.agents.map(a=>
+    `<span class="k" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+       <span class="swatch-sq" style="background:${a.color}"></span>${a.label} (${fmt(a.best)})</span>`).join("")+
+    `<span class="k" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+       <span class="swatch" style="width:16px;height:3px;background:var(--accent)"></span>best-of-N</span>`;
+}
+
+function chart(){
+  const box=$("#popChart");box.innerHTML="";
+  const A=DATA.agents.filter(a=>a.points.length);
+  if(!A.length){box.innerHTML='<p class="cardsub">No scored experiments yet.</p>';return;}
+  const W=box.clientWidth||900,H=320,m={t:14,r:16,b:30,l:46},iw=W-m.l-m.r,ih=H-m.t-m.b;
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`});
+  const allpts=A.flatMap(a=>a.points).concat(DATA.population);
+  const xmax=Math.max(...allpts.map(p=>p[0]),1);
+  const ys=allpts.map(p=>p[1]); let mn=Math.min(...ys),mx=Math.max(...ys);const r=(mx-mn)||1;mn-=r*.08;mx+=r*.08;
+  const X=k=>m.l+(k-1)/((xmax-1)||1)*iw, Y=v=>m.t+(1-(v-mn)/((mx-mn)||1))*ih;
+  const g=el("g",{class:"axis"});
+  for(let i=0;i<=4;i++){const v=mn+(mx-mn)*i/4,y=Y(v);g.appendChild(el("line",{x1:m.l,y1:y,x2:W-m.r,y2:y}));
+    const t=el("text",{x:m.l-8,y:y+3,"text-anchor":"end"});t.textContent=v.toFixed(2);g.appendChild(t);}
+  for(let k=1;k<=xmax;k++){const t=el("text",{x:X(k),y:H-10,"text-anchor":"middle"});t.textContent=k;g.appendChild(t);}
+  svg.appendChild(g);
+  // per-agent lines
+  A.forEach(a=>{
+    let d=`M ${X(a.points[0][0])} ${Y(a.points[0][1])}`;
+    a.points.forEach(p=>d+=` L ${X(p[0])} ${Y(p[1])}`);
+    svg.appendChild(el("path",{d,fill:"none",stroke:a.color,"stroke-width":1.8,"stroke-linejoin":"round",opacity:.9}));
+    a.points.forEach(p=>{const c=el("circle",{cx:X(p[0]),cy:Y(p[1]),r:3.2,fill:a.color});
+      c.addEventListener("mousemove",ev=>showTip(`<b>${a.label}</b> · exp ${p[0]}<br>best ${fmt(p[1])}`,ev.clientX,ev.clientY));
+      c.addEventListener("mouseleave",hideTip);svg.appendChild(c);});
+    const last=a.points[a.points.length-1];
+    const t=el("text",{x:X(last[0])+6,y:Y(last[1])+3,fill:a.color,"font-size":10,"font-weight":700});
+    t.textContent=a.label.replace("agent_","a");svg.appendChild(t);
+  });
+  // population best-of-N (bold accent)
+  if(DATA.population.length){
+    let d=`M ${X(DATA.population[0][0])} ${Y(DATA.population[0][1])}`;
+    DATA.population.forEach(p=>d+=` L ${X(p[0])} ${Y(p[1])}`);
+    svg.appendChild(el("path",{d,fill:"none",stroke:cvar("--accent"),"stroke-width":3.2,"stroke-linejoin":"round"}));
+  }
+  box.appendChild(svg);
+}
+
+function board(){
+  const A=DATA.agents.slice().sort((a,b)=>(b.best??-1)-(a.best??-1));
+  $("#p-body").innerHTML=A.map((a,idx)=>`
+    <tr>
+      <td><div class="agentcell"><span class="swatch-sq" style="background:${a.color}"></span>
+        <span class="mono ${idx===0?'winner':''}">${a.label}</span></div></td>
+      <td><span class="chip mono">${a.effort||"—"}</span></td>
+      <td class="desc">${a.hint||"—"}</td>
+      <td class="num mono ${idx===0?'winner':''}">${fmt(a.best)}</td>
+      <td class="num mono">${a.done}</td>
+      <td class="num mono">${a.kept}</td>
+      <td class="num mono" style="color:var(--muted)">${a.attempts}</td>
+      <td class="num mono">$${fmt(a.cost,4)}</td>
+    </tr>`).join("");
+}
+
+function renderAll(){meta();legend();chart();board();}
+(function(){const mq=matchMedia("(prefers-color-scheme:dark)");
+  document.documentElement.setAttribute("data-theme",mq.matches?"dark":"light");
+  $("#themeTxt").textContent=mq.matches?"Dark":"Light";
+  $("#themeBtn").addEventListener("click",()=>{const c=document.documentElement.getAttribute("data-theme");
+    const nt=c==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",nt);
+    $("#themeTxt").textContent=nt==="dark"?"Dark":"Light";requestAnimationFrame(chart);});})();
+renderAll();
+let rt;addEventListener("resize",()=>{clearTimeout(rt);rt=setTimeout(chart,150);});
+"""
 
 
 def main() -> None:
@@ -545,7 +788,21 @@ def main() -> None:
     ap.add_argument("--open", action="store_true", help="open the result in a browser")
     ap.add_argument("--session", default=None, help="archive session id (default: latest)")
     ap.add_argument("--all", action="store_true", help="aggregate across all sessions")
+    ap.add_argument("--parallel", metavar="RUN_DIR", default=None,
+                    help="render a population run (parallel_runs/<name>)")
     args = ap.parse_args()
+
+    if args.parallel:
+        run_dir = Path(args.parallel)
+        data = collect_parallel(run_dir)
+        out = args.out if args.out != str(config.MODEL_DIR.parent / "dashboard.html") \
+            else str(run_dir / "dashboard.html")
+        Path(out).write_text(render_parallel(data))
+        print(f"Wrote {out}  ({data['meta']['n_agents']} agents, "
+              f"best {data['meta']['metric']}={data['meta']['best']})")
+        if args.open:
+            webbrowser.open(f"file://{Path(out).resolve()}")
+        return
 
     data = collect(session=args.session, all_sessions=args.all)
     Path(args.out).write_text(render(data))

@@ -26,6 +26,9 @@ model_dir/dashboard*.html
 /dashboard.html
 /dashboard-demo.html
 
+# === Parallel population runs (worktrees + per-agent archives; runtime) ===
+parallel_runs/
+
 # === OS ===
 .DS_Store
 Thumbs.db

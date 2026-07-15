@@ -122,6 +122,29 @@ metric, kept/reverted, total spend, success rate), per-experiment cost bars, the
 best run's learning curve, and the full status-coloured experiment log. Dark and
 light themes; regenerate it any time (or after each run) to refresh.
 
+## Population runs (N agents in parallel)
+
+Run several agents on the same task at once, each in its own **git worktree** and
+OS process, then keep the best (`parallel.py`):
+
+```bash
+python parallel.py --agents 4 --iterations 6                 # from model_dir HEAD
+python parallel.py --agents 8 --iterations 10 --base <sha>   # clean population from a baseline
+```
+
+Each agent explores with a different `REASONING_EFFORT` + focus hint. A live
+leaderboard streams while they run; on finish you get `parallel_runs/<name>/`
+with per-agent archives, `leaderboard.json`, and merged `all_experiments.jsonl`.
+View it:
+
+```bash
+python dashboard.py --parallel parallel_runs/<name>   # overlaid trajectories + best-of-N + leaderboard
+```
+
+Worktrees are removed afterward but each agent's result is kept as a git branch
+(`par/<name>/agent-NN`). The binding constraint at high N is the LLM rate limit,
+not CPU (training is ~4 s).
+
 ## How costs are kept low
 
 | Lever | What it does |
