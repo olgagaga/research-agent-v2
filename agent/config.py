@@ -123,6 +123,14 @@ TRIAL = int(os.environ.get("TRIAL", "0"))
 # config value rather than a fork; see agent/proposers.py.
 PROPOSER = os.environ.get("PROPOSER", "llm")
 
+# Action space the random control draws from — the independent variable in the
+# "is the LLM worth the curation?" experiment:
+#   "curated" — 21 expert-chosen edits (mostly good options)
+#   "wide"    — same 4 levers, but a large sampled space incl. junk regions
+# The LLM arm ignores this (it generates freely); varying it measures how the
+# LLM-vs-random gap responds to action-space quality.
+RANDOM_MENU = os.environ.get("RANDOM_MENU", "curated")
+
 # Seed for the agent's own stochastic choices (proposer sampling, tie-breaks).
 # Note: this does NOT make an LLM deterministic — it makes the *harness* and the
 # random arm reproducible.
@@ -141,6 +149,7 @@ def snapshot() -> dict:
         "agent_label": AGENT_LABEL,
         "agent_seed": AGENT_SEED,
         "proposer": PROPOSER,
+        "random_menu": RANDOM_MENU,
         "llm_model": LLM_MODEL,
         "reasoning_effort": REASONING_EFFORT,
         "agent_hint": AGENT_HINT,

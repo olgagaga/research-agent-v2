@@ -162,9 +162,22 @@ one seed and an irreversible commit decision is made from it.
   embarrassingly well" — it did. **Caveat that bounds the claim:** the menu is
   *curated*, so this tests *choice within an expert action space*, not the LLM's
   ability to construct one. Still open, and now the sharpest question in the repo:
-  - **De-curated menu.** Add junk options + wide hyperparameter ranges. If the LLM
-    wins there, its value is **filtering** a noisy space — a real, testable claim.
-    If it still ties, the harness is the product.
+  - ~~**De-curated menu.**~~ **— RUN (2026-07-15). Dose-response, 3 arms, n=5.**
+    `RANDOM_MENU=curated|wide` makes action-space quality the independent variable
+    while the LLM arm is untouched (so this is *not* "random made dumber" — it is
+    the same search problem without the expert prior). Result:
+    `rand-curated 0.7571 ± 0.041` ≈ `llm 0.7545 ± 0.020` (t = −0.12, tie
+    **replicated**) > `rand-wide 0.6977 ± 0.058` (llm vs wide: +0.057, **t = 2.07 —
+    suggestive, not significant at n=5**). Direction matches the hypothesis
+    ("the LLM is worth the curation") — but **pooled to n=10 it did NOT hold**:
+    llm 0.7481 ± 0.027 vs rand-wide 0.6856 ± 0.115, **t = 1.67, not significant**
+    (n≈28/arm needed). llm vs rand-curated stayed a tie at n=10 (t = −1.13, LLM
+    nominally *lower*, $0.39 vs $0.00). **The filtering hypothesis is unsupported.**
+    The one significant effect is **variance**: F = 18.3 (df 9,9) — random on a wide
+    space drew a catastrophe (0.388) while the LLM's worst of 10 was 0.695. The
+    LLM buys a **floor, not a ceiling**. **Note:** the seeded random arms are
+    exactly reproducible (same mean to 4 dp across sweeps), so added trials need
+    `--trial-offset`, and pooling must assert seed-uniqueness.
   - **Bigger action space.** 4 levers is where random shines; directed search
     should pay only when the space is too large to sample. Needs §6.6 (task as
     data) to test on anything else.

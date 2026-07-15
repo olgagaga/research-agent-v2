@@ -63,13 +63,37 @@ def variant_name(combo: dict[str, str]) -> str:
     return "__".join(f"{k.lower()}-{v.replace('/', '-')}" for k, v in sorted(combo.items()))
 
 
-def make_arms(grid: dict[str, list[str]], trials: int) -> list[dict]:
+def make_arms(grid: dict[str, list[str]], trials: int, offset: int = 0) -> list[dict]:
     keys = sorted(grid)
     combos = [dict(zip(keys, vals)) for vals in itertools.product(*(grid[k] for k in keys))] or [{}]
     arms = []
     for combo in combos:
-        for t in range(trials):
+        for t in range(offset, offset + trials):
             arms.append({"combo": combo, "variant": variant_name(combo), "trial": t})
+    return arms
+
+
+def parse_arms(specs: list[str], trials: int, offset: int = 0) -> list[dict]:
+    """Explicit arms: ``NAME:KEY=V,KEY2=V2``.
+
+    Needed whenever the grid isn't a clean product — e.g. comparing the LLM
+    against two *random* menus: a `--vary PROPOSER=llm,random --vary
+    RANDOM_MENU=curated,wide` product would run the LLM arm twice (it ignores
+    RANDOM_MENU), paying for a duplicate.
+    """
+    arms = []
+    for spec in specs:
+        if ":" not in spec:
+            sys.exit(f"--arm needs NAME:KEY=V[,KEY=V] (got {spec!r})")
+        name, kvs = spec.split(":", 1)
+        combo = {}
+        for kv in kvs.split(","):
+            if "=" not in kv:
+                sys.exit(f"--arm bad assignment {kv!r} in {spec!r}")
+            k, v = kv.split("=", 1)
+            combo[k.strip()] = v.strip()
+        for t in range(offset, offset + trials):
+            arms.append({"combo": combo, "variant": name.strip(), "trial": t})
     return arms
 
 
@@ -179,7 +203,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Sweep system variants × trials")
     ap.add_argument("--vary", action="append", default=[],
                     help="KEY=v1,v2 (repeatable → cartesian product). KEY is any agent env knob.")
+    ap.add_argument("--arm", action="append", default=[],
+                    help="explicit arm NAME:KEY=V[,KEY=V] (repeatable). Use instead of --vary "
+                         "when the grid isn't a clean product.")
     ap.add_argument("--trials", "-t", type=int, default=3, help="repeats per variant")
+    ap.add_argument("--trial-offset", type=int, default=0,
+                    help="start trial index here (AGENT_SEED=trial, so an offset gives "
+                         "FRESH seeds — required to pool with an earlier sweep)")
     ap.add_argument("--iterations", "-n", type=int, default=6, help="experiments per run (equal budget)")
     ap.add_argument("--base", default=None, help="base commit (default: model_dir HEAD)")
     ap.add_argument("--name", default=None)
@@ -197,8 +227,12 @@ def main() -> None:
     run_dir = ROOT / "sweep_runs" / tag
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    grid = parse_vary(args.vary)
-    arms = make_arms(grid, args.trials)
+    if args.arm:
+        grid = {"__arms__": [a.split(":", 1)[0] for a in args.arm]}
+        arms = parse_arms(args.arm, args.trials, args.trial_offset)
+    else:
+        grid = parse_vary(args.vary)
+        arms = make_arms(grid, args.trials, args.trial_offset)
     cores = os.cpu_count() or 4
     threads = args.threads or max(1, (cores - 2) // max(1, min(args.max_parallel, len(arms))))
 

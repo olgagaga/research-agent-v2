@@ -27,12 +27,16 @@ because its keep/revert rule fires at `Δ > 0` on a single-seed estimate whose
 dominates" result. All three are single-seed artifacts; the 2026-07-15 entry
 records why.
 
-**Also do not quote the agent's gains as evidence the LLM works.** The control
-(2026-07-15, `sweep.py --vary PROPOSER=llm,random`) found **no detectable
-advantage over random search** on the same action space: llm 0.7643 ± 0.0281 vs
-random 0.7571 ± 0.0412 (n=5, Welch t = 0.33), at $0.19 vs $0.00. Until that is
-overturned on a larger action space, the defensible claim is about the **harness**
-(surgical edits + keep/revert ratchet + cheap eval loop), not about the model.
+**Also do not quote the agent's gains as evidence the LLM works.** Controls
+(2026-07-15, `sweep.py`, n=10/arm, 8 experiments, base 8e1f1e5) found **no
+detectable advantage over random search**:
+`rand-curated 0.7647 ± 0.038 ($0.00)` vs `llm 0.7481 ± 0.027 ($0.39)` — t = −1.13,
+the LLM nominally *lower*. On a wide/un-curated space the LLM leads (+0.063) but
+**not significantly** (t = 1.67; n≈28/arm needed). The **only** significant model
+effect is variance: F = 18.3 — the LLM buys a **floor, not a ceiling** (worst of
+10: llm 0.695 vs wide-random 0.388). Defensible claim = the **harness** (surgical
+edits + keep/revert ratchet + cheap eval loop) **plus variance reduction** — not
+that the LLM finds better solutions.
 
 ---
 
@@ -320,14 +324,55 @@ other claim is denominated in, and it cost $0 and 6 minutes to obtain.
   *filtering*, which is a real and testable claim; (c) more trials + a task with a
   larger action space.
 
+### 2026-07-15 — Dose-response on action-space quality: my hypothesis failed
+- **Design.** To avoid the obvious trap (make random dumber → declare victory),
+  action-space *quality* is the independent variable and the LLM arm is untouched:
+  `RANDOM_MENU=curated` (21 expert edits) vs `wide` (same 4 levers, sampled
+  hyperparameters, junk regions: lr∈[1e-6,1], sigmoid/tanh nets, dropout 0.8, MSE
+  on a detection task, feature-dropping). 3 arms × 10 trials × 8 experiments,
+  equal budget, base `8e1f1e5`. Pre-registered prediction (previous entry): *"if
+  the LLM wins on wide, its value is filtering."*
+- **Pooled result (n=10/arm, fresh seeds via `--trial-offset`):**
+
+  | arm | best val/AUPRC | sd | worst trial | cost |
+  |-----|----------------|-----|-------------|------|
+  | `rand-curated` | **0.7647** | 0.0380 | 0.7191 | **$0.00** |
+  | `llm` | 0.7481 | **0.0269** | 0.6954 | **$0.39** |
+  | `rand-wide` | 0.6856 | 0.1153 | **0.3879** | **$0.00** |
+
+  - `llm` vs `rand-curated`: **−0.0166, t = −1.13** → tie **replicated at n=10**;
+    the LLM's mean is nominally *lower*, at $0.39 against $0.00.
+  - `llm` vs `rand-wide`: +0.0625, **t = 1.67 → NOT significant.** At n=5 this
+    looked suggestive (t=2.07); with more data it got *weaker*. **The filtering
+    hypothesis is not supported.** Power: resolving a +0.063 gap at sd 0.084 needs
+    **n ≈ 28/arm**; we have 10 — so this is *underpowered*, not *refuted*.
+- **The one robust signal is variance, not the mean.** `rand-wide` sd = 0.1153 vs
+  `llm` 0.0269 — **F = 18.3 (df 9,9; crit ≈ 4.03) → significant.** Random on a
+  wide space drew a catastrophe (0.388); the LLM's worst run in 10 was 0.695. So
+  the LLM's measurable contribution here is a **floor, not a ceiling**: it doesn't
+  find better optima than random, it reliably avoids terrible ones.
+- **Honest scorecard for the whole control programme:**
+  1. On a curated action space the LLM adds **nothing** measurable (twice, n=10).
+  2. On a wide space it is **not proven better on the mean** (underpowered).
+  3. It **is** significantly more *reliable* (18× lower outcome variance).
+  So the defensible claim remains about the **harness**, plus a narrow one about
+  the model: *it buys variance reduction, not performance.*
+- **Method notes worth keeping:** the seeded random arms reproduce to 4 dp across
+  sweeps (`--trial-offset` is mandatory to add information, not duplicates — the
+  pooling script asserts seed-uniqueness). And n=5 nearly sold me a false positive
+  (t=2.07): the first thing the apparatus did after being built was stop me from
+  over-claiming with it.
+
 ---
 
 ## Open threads
 See `RESEARCH.md` for the full backlog. Near-term:
-- **Replay the control's winners under seeds** — the control compares single-seed
-  val maxima; σ ≈ 0.015 may swamp the +0.007 gap entirely.
-- **De-curated / wider menu.** The current control tests "choice within an expert
-  menu". The sharper question is whether the LLM *filters* a noisy action space.
+- **Powering the wide contrast** needs n≈28/arm (~$1.10 for the LLM arm). Worth it
+  only if a mean difference is the claim — the *variance* claim is already made.
+- **Replay the control's winners under seeds** — all arms compare single-seed val
+  maxima; σ ≈ 0.015 inflates every level (fairly, but the numbers aren't truth).
+- **Bigger action space / second task** (§6.6, task-as-data) — 4 levers is exactly
+  where random should win, so this whole programme is confounded with a tiny space.
 - **Fix the loop's decision rule** (from `replay.py`): R-seed averaged evaluation
   + a real commit gate (Δ > k·SE, not Δ > 0). Then R=1 vs R=5 at equal LLM budget.
 - **Stopping**: the agent plateaued at step 6 and paid for 4 more experiments. Can
