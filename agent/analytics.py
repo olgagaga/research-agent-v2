@@ -68,6 +68,8 @@ def list_sessions(archive_dir: Optional[Path] = None) -> list[dict]:
         out.append({
             "session": sid,
             "agent": recs[0].get("agent", "solo") if recs else "solo",
+            "variant": recs[0].get("variant", "default") if recs else "default",
+            "trial": recs[0].get("trial", 0) if recs else 0,
             "model": recs[0].get("model") if recs else None,
             "experiments": len(scored),
             "attempts": len(recs),
@@ -76,6 +78,62 @@ def list_sessions(archive_dir: Optional[Path] = None) -> list[dict]:
             "started": recs[0].get("ts") if recs else None,
         })
     return sorted(out, key=lambda s: s["session"], reverse=True)
+
+
+# --------------------------------------------------------------------- sweeps
+
+
+def sweep_runs_dir() -> Path:
+    return config.MODEL_DIR.parent / "sweep_runs"
+
+
+def list_sweeps() -> list[dict]:
+    """Every variant sweep on disk (newest first)."""
+    root = sweep_runs_dir()
+    if not root.exists():
+        return []
+    out = []
+    for d in sorted(root.iterdir(), reverse=True):
+        s = d / "summary.json"
+        if not d.is_dir() or not s.exists():
+            continue
+        try:
+            data = json.loads(s.read_text())
+        except Exception:
+            continue
+        out.append({"name": d.name, "metric": data.get("metric"),
+                    "n_variants": len(data.get("variants", [])),
+                    "total_cost": data.get("total_cost"),
+                    "generated": data.get("generated")})
+    return out
+
+
+def collect_sweep(name: str) -> dict:
+    """One sweep: per-variant mean ± σ over trials (RESEARCH.md §6).
+
+    This is the only view that answers "does variant A beat variant B?" — a point
+    estimate per arm would not, which is why trials are aggregated, never shown
+    as a single run.
+    """
+    run_dir = sweep_runs_dir() / name
+    summary = json.loads((run_dir / "summary.json").read_text())
+    spec_p = run_dir / "spec.json"
+    summary["spec"] = json.loads(spec_p.read_text()) if spec_p.exists() else {}
+    summary["name"] = name
+    # Attach per-variant trial trajectories for plotting.
+    per_variant_records: dict[str, list] = {}
+    for rec in _read_jsonl(run_dir / "all_experiments.jsonl"):
+        per_variant_records.setdefault(rec.get("variant", "default"), []).append(rec)
+    for v in summary.get("variants", []):
+        recs = per_variant_records.get(v["variant"], [])
+        v["attempts_total"] = len(recs)
+        v["kept_total"] = sum(1 for r in recs if r.get("kept"))
+    return summary
+
+
+def compare_variants(name: str) -> list[dict]:
+    """Flat leaderboard of variants in a sweep, best first."""
+    return collect_sweep(name).get("variants", [])
 
 
 # --------------------------------------------------------------------------- solo

@@ -44,12 +44,19 @@ class RunArchive:
     """Append-only writer for experiment records."""
 
     def __init__(self, root: Path, session: str, model: str = "", task: str = "",
-                 agent: str = "solo"):
+                 agent: str = "solo", config_snapshot: Optional[Dict[str, Any]] = None,
+                 variant: str = "default", trial: int = 0):
         self.root = Path(root)
         self.session = session
         self.model = model
         self.task = task
         self.agent = agent
+        # The independent variables of this run (RESEARCH.md §6): without them the
+        # archive says what the agent did but not what it was, so sessions can't
+        # be compared and no A/B question is decidable.
+        self.config_snapshot = config_snapshot or {}
+        self.variant = variant
+        self.trial = trial
         self.root.mkdir(parents=True, exist_ok=True)
         self.jsonl = self.root / "experiments.jsonl"
         # Per-session metadata file (human-scannable index of sessions).
@@ -60,9 +67,12 @@ class RunArchive:
         rec = {
             "session": self.session,
             "agent": self.agent,
+            "variant": self.variant,
+            "trial": self.trial,
             "started": datetime.now(timezone.utc).isoformat(),
             "model": self.model,
             "task": self.task,
+            "config": self.config_snapshot,
         }
         try:
             with open(idx, "a") as fh:
@@ -75,6 +85,8 @@ class RunArchive:
         full = {
             "session": self.session,
             "agent": self.agent,
+            "variant": self.variant,
+            "trial": self.trial,
             "ts": datetime.now(timezone.utc).isoformat(),
             "model": self.model,
             **rec,

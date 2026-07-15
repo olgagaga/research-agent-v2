@@ -306,8 +306,11 @@ def run_loop(
         config.ARCHIVE_DIR, session, model=config.LLM_MODEL,
         task=f"{config.TARGET_METRIC} ({config.TARGET_DIRECTION}) on {md.name}",
         agent=config.AGENT_LABEL,
+        config_snapshot=config.snapshot(),  # what the agent WAS (RESEARCH.md §6)
+        variant=config.VARIANT, trial=config.TRIAL,
     )
-    log.info("Archiving to %s (session %s, agent %s)", archive.jsonl, session, config.AGENT_LABEL)
+    log.info("Archiving to %s (session %s, agent %s, variant %s/trial %d)",
+             archive.jsonl, session, config.AGENT_LABEL, config.VARIANT, config.TRIAL)
 
     # --- cost accounting -----------------------------------------------------
     # `pending_*` accumulate spend since the last logged experiment (so LLM

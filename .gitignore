@@ -44,3 +44,6 @@ dashboard/frontend/dist/
 # === Replay / variance runs (worktrees; runtime, like parallel_runs) ===
 replays/
 dashboard/frontend/*.tsbuildinfo
+
+# === Variant sweeps (worktrees + per-arm archives; runtime) ===
+sweep_runs/

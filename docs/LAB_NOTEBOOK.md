@@ -233,8 +233,46 @@ other claim is denominated in, and it cost $0 and 6 minutes to obtain.
 
 ---
 
+### 2026-07-15 — Experimental apparatus: the system can now be studied (RESEARCH.md §6)
+- Two sessions converged on the same wall from opposite sides: `replay.py` showed
+  the *scores* need error bars; this entry is about the *system* needing them too.
+  Every §4 question is "does variant A beat variant B?", and the repo could not
+  answer one of them — not for lack of ideas, but of apparatus.
+- **What was missing (and is now in):**
+  - **Run-config record.** The archive stored what the agent *did*, never what it
+    *was*. Added `config.snapshot()` (17 independent variables: proposer, model,
+    effort, commit threshold, groups, …) → written into the session header, and
+    every record tagged `variant` + `trial`. Sessions are now comparable at all.
+  - **Repeat trials.** Added `VARIANT` / `TRIAL` / `AGENT_SEED`. An outcome is a
+    distribution, never a point — the same lesson `replay.py` taught for scores,
+    applied to the agent's own result.
+  - **`sweep.py`** — grid runner: `config × trials` at equal budget, reusing
+    `parallel.py`'s worktree isolation. `--vary KEY=v1,v2` over any env knob.
+    Reports **mean ± σ over trials** per variant, never a single run.
+  - **Cross-run analytics** (`list_sweeps`/`collect_sweep`/`compare_variants`) +
+    `/api/sweeps` — so variants are comparable in the dashboard, not just sessions.
+  - **`PROPOSER` knob reserved** so the non-LLM control arm (§4 "Controls") is a
+    config value, not a fork of the codebase.
+- **Smoke (n=1, NOT a result):** `--vary REASONING_EFFORT=low,medium -n 1` ran two
+  isolated arms and aggregated cleanly (low 0.7935/$0.0039, medium 0.7588/$0.0055).
+  Quoting that as a finding would repeat exactly the error the 2026-07-15 replay
+  entry documents — it is an apparatus test, and n=1 means nothing.
+- **Learning:** the ordering was wrong for a while. We built the agent, then a
+  population, then a dashboard — all before anything could measure whether a
+  change to the agent *helped*. Instrument (`replay.py`) and apparatus (`sweep.py`)
+  should have preceded the population search, which is currently the least
+  interpretable thing in the repo.
+- **Biggest remaining debt:** the task is hardcoded into the system
+  (`TARGET_GROUPS`, `ALLOWED_FILES`, the lever list inside the system prompt).
+  Until a task is *data*, every agent-level claim stays confounded with mammography.
+
+---
+
 ## Open threads
 See `RESEARCH.md` for the full backlog. Near-term:
+- **Apparatus is in (§6); now use it:** the first real sweep should be the control
+  arm (`PROPOSER=llm` vs `random`) — until that runs, "the agent works" is
+  unfalsifiable. Needs `agent/proposers.py`.
 - **Fix the loop's decision rule** (from `replay.py`): R-seed averaged evaluation
   + a real commit gate (Δ > k·SE, not Δ > 0). Then R=1 vs R=5 at equal LLM budget.
 - **Stopping**: the agent plateaued at step 6 and paid for 4 more experiments. Can

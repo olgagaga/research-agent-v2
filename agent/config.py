@@ -102,3 +102,55 @@ TARGET_GROUPS: list[set[str]] = [
 
 # Flattened set for quick membership tests.
 ALLOWED_FILES: set[str] = {f for g in TARGET_GROUPS for f in g}
+
+# ---------------------------------------------------------------------------
+# Experiment identity (RESEARCH.md §6 — apparatus for studying the agent)
+# ---------------------------------------------------------------------------
+#
+# The archive records what the agent DID; without these it never records what the
+# agent WAS, so two sessions aren't comparable and no A/B question is decidable.
+
+# Name of the system variant under test (e.g. "baseline", "R5", "random-arm").
+# Every archive record is tagged with it; sweeps group by it.
+VARIANT = os.environ.get("VARIANT", "default")
+
+# Trial index within a variant (repeat runs of the SAME config → distribution,
+# not a point estimate). Set by the sweep runner.
+TRIAL = int(os.environ.get("TRIAL", "0"))
+
+# Which proposer generates experiments: "llm" (default) or "random" (the non-LLM
+# control arm — RESEARCH.md §4 "Controls"). Reserved here so the control is a
+# config value rather than a fork; see agent/proposers.py.
+PROPOSER = os.environ.get("PROPOSER", "llm")
+
+# Seed for the agent's own stochastic choices (proposer sampling, tie-breaks).
+# Note: this does NOT make an LLM deterministic — it makes the *harness* and the
+# random arm reproducible.
+AGENT_SEED = int(os.environ.get("AGENT_SEED", "0"))
+
+
+def snapshot() -> dict:
+    """The resolved configuration of THIS run, for the archive session header.
+
+    Everything here is an independent variable in a system-level experiment.
+    Paths are excluded (they are per-worktree noise, not variables).
+    """
+    return {
+        "variant": VARIANT,
+        "trial": TRIAL,
+        "agent_label": AGENT_LABEL,
+        "agent_seed": AGENT_SEED,
+        "proposer": PROPOSER,
+        "llm_model": LLM_MODEL,
+        "reasoning_effort": REASONING_EFFORT,
+        "agent_hint": AGENT_HINT,
+        "target_metric": TARGET_METRIC,
+        "target_direction": TARGET_DIRECTION,
+        "statistical_delta": STATISTICAL_DELTA,
+        "tracker": TRACKER,
+        "exec_command": " ".join(EXEC_COMMAND),
+        "run_timeout_sec": RUN_TIMEOUT_SEC,
+        "max_validation_retries": MAX_VALIDATION_RETRIES,
+        "target_groups": [sorted(g) for g in TARGET_GROUPS],
+        "prompt_cache": os.environ.get("PROMPT_CACHE", "1"),
+    }

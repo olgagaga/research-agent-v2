@@ -84,6 +84,20 @@ def parallel_run(name: str) -> dict:
     return analytics.collect_parallel(name)
 
 
+@app.get("/api/sweeps")
+def sweeps() -> list[dict]:
+    """Variant sweeps (system-level A/B experiments)."""
+    return analytics.list_sweeps()
+
+
+@app.get("/api/sweeps/{name}")
+def sweep(name: str) -> dict:
+    run_dir = analytics.sweep_runs_dir() / name
+    if not (run_dir / "summary.json").exists():
+        raise HTTPException(status_code=404, detail=f"no sweep {name!r}")
+    return analytics.collect_sweep(name)
+
+
 # --------------------------------------------------------------------------- static
 
 # Serve the built SPA at "/" if it exists (production single-server mode).
