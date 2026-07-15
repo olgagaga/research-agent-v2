@@ -1,7 +1,7 @@
 [project]
 name = "autoresearch"
-version = "0.1.0"
-description = "Cheap LLM-driven ML optimization agent (orchestrator env)"
+version = "0.2.0"
+description = "Cheap LLM-driven ML optimization agent (orchestrator + dashboard)"
 readme = "README.md"
 requires-python = ">=3.10"
 # Orchestrator dependencies only — the agent itself needs no ML stack.
@@ -15,6 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Dashboard API — install with: uv sync --extra dashboard
+dashboard = [
+    "fastapi>=0.104",
+    "uvicorn>=0.24",
+]
 # Future experiment-tracking backend — install with: uv sync --extra clearml
 clearml = ["clearml>=1.16"]
 

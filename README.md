@@ -16,21 +16,36 @@ read context ─▶ propose ONE atomic experiment ─▶ apply surgical edit
 ## Layout
 
 ```
-agent/            orchestrator (no ML deps)
-  orchestrator.py   the loop (validate → edit → train → track → git → log)
-  editor.py         surgical AST-guided source editor (the token-cost lever)
-  schemas.py        ExperimentPlan / FileEdits / EditOp (structured LLM output)
-  tracker.py        pluggable metrics backend: LocalTracker | ClearMLTracker
-  llm.py            OpenRouter wrapper (prompt caching, cost tracking)
-  git_manager.py    commit-on-success / hard-reset-on-failure
-  logs_manager.py   logs.md durable memory
-  config.py         env-driven knobs
-model_dir/        the research TARGET (its own git repo + venv)
-  data.py, run.py   FIXED harness — the agent must not edit these
+agent/              the agent library (no ML deps)
+  orchestrator.py     the loop (validate → edit → train → track → git → log)
+  editor.py           surgical AST-guided source editor (the token-cost lever)
+  schemas.py          ExperimentPlan / FileEdits / EditOp (structured LLM output)
+  tracker.py          pluggable metrics backend: LocalTracker | ClearMLTracker
+  archive.py          durable append-only run archive  → history/
+  analytics.py        reads history/ + parallel_runs/ (single source for the UI)
+  llm.py              LLM client (OpenAI direct + OpenRouter), cost accounting
+  git_manager.py      commit-on-success / hard-reset-on-failure
+  logs_manager.py     logs.md working memory
+  config.py           env-driven knobs
+dashboard/          web UI (see dashboard/README.md)
+  backend/            FastAPI — JSON API + serves the built SPA
+  frontend/           React + Vite + TypeScript
+history/            DURABLE archive — every experiment, ever (survives resets)
+model_dir/          the research TARGET / working dir (its own git repo + venv)
+  data.py, run.py     FIXED harness — the agent must not edit these
   model.py loss.py optimizer.py transforms.py config.yaml   AGENT-EDITABLE seams
-  wiki.md           problem briefing for the LLM
-main.py           CLI entry point
+  wiki.md             problem briefing for the LLM
+parallel_runs/      population runs (worktrees + per-agent archives; runtime)
+docs/               RESEARCH.md · LAB_NOTEBOOK.md · TASK.md
+tests/              editor unit tests + isolated end-to-end loop test
+main.py             run one agent          parallel.py   run a population
 ```
+
+**Separation of concerns:** `agent/` never imports the dashboard; the dashboard
+never imports the loop. They meet only at `history/` (append-only JSONL) — the
+agent writes it, `agent/analytics.py` reads it, the API serves it. `model_dir/`
+is pure working directory: its own git repo, mutated and reverted by the agent,
+and *nothing* durable lives there (which is why the archive is outside it).
 
 ## The task: rare-event medical detection
 
@@ -100,27 +115,31 @@ Watch progress in `model_dir/logs.md` (the agent's memory) and `git log` inside
 
 Each `logs.md` row records **`Tokens(in→out)`**, per-experiment **`Cost $`**, and
 running **`Cum $`** — so the exact LLM spend per experiment and cumulative total
-are always visible. Cost is read from OpenRouter's usage/generation API; crash
+are always visible. Cost comes from the provider's usage (OpenAI: tokens x pricing incl. cached discount); crash
 retries roll their cost into the experiment they belong to. The final cumulative
 spend is also logged at the end of the run.
 
-## Dashboard
+## Dashboard (FastAPI + React)
 
-`dashboard.py` turns `logs.md` + `runs/*/metrics.json` into a single
-self-contained HTML telemetry page (inline SVG charts, no external assets —
-works offline and as a shareable artifact):
+A real web app — see [dashboard/README.md](dashboard/README.md).
 
 ```bash
-python dashboard.py           # -> ./dashboard.html  (project root)
-python dashboard.py --open    # ...and open it in a browser
+uv sync --extra dashboard                            # fastapi + uvicorn
+cd dashboard/frontend && npm install && npm run build && cd ../..
+python dashboard/backend/app.py                      # http://localhost:8000
 ```
 
-It centres on the **optimization curve**: best-so-far target metric across
-experiments, with each experiment's own score coloured by kept (committed) vs
-reverted, against the naive-baseline reference. Around it: KPI tiles (best
-metric, kept/reverted, total spend, success rate), per-experiment cost bars, the
-best run's learning curve, and the full status-coloured experiment log. Dark and
-light themes; regenerate it any time (or after each run) to refresh.
+Two views, both live-polling (5 s, pausable) with light/dark themes:
+- **Solo run** — the **optimization curve** front and centre (best-so-far, with
+  each experiment's own score coloured kept vs reverted against the naive
+  baseline), KPIs, spend-per-experiment, the best run's learning curve, and the
+  full experiment log. Session picker.
+- **Population** — per-agent trajectories + the **best-of-N** curve, and a ranked
+  leaderboard. Run picker.
+
+It reads the **durable archive** (`history/`), not `logs.md`, so it reflects real
+history even after `model_dir` is reset. For hot-reload dev, run the backend and
+`npm run dev` (:5173, proxies `/api`) side by side.
 
 ## Population runs (N agents in parallel)
 
@@ -138,7 +157,7 @@ with per-agent archives, `leaderboard.json`, and merged `all_experiments.jsonl`.
 View it:
 
 ```bash
-python dashboard.py --parallel parallel_runs/<name>   # overlaid trajectories + best-of-N + leaderboard
+python dashboard/backend/app.py    # then open the Population tab at :8000
 ```
 
 Worktrees are removed afterward but each agent's result is kept as a git branch
@@ -196,6 +215,6 @@ reverted) · `crushed` (crashed twice in a row → reverted, context reset).
 ## Tests
 
 ```bash
-python tests/test_editor.py   # 15 AST-editor unit tests
+python tests/test_editor.py   # 17 AST-editor unit tests
 python tests/test_loop.py     # end-to-end loop with a MOCK LLM (no API cost)
 ```

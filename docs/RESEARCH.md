@@ -74,7 +74,7 @@ pluggable interface as ClearML.
 
 > **Status: implemented (v1) in `parallel.py`.** N agents, git worktrees,
 > process-per-agent, per-agent durable archives, live leaderboard, and a
-> `dashboard.py --parallel` view (per-agent curves + best-of-N). First run
+> a Population view in the dashboard app (per-agent curves + best-of-N). First run
 > (3×2 from baseline) already showed the loss lever dominating on this
 > imbalanced task — see `LAB_NOTEBOOK.md`. Still TODO: the equal-budget
 > best-of-N vs single comparison, and breeding a 2nd generation from the top-2.

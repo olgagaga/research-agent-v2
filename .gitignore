@@ -36,3 +36,11 @@ Thumbs.db
 # NOTE: history/ (the durable run archive) IS committed on purpose — it's the
 # research record. Remove the next line to stop tracking it if it grows large.
 # history/
+
+# === Dashboard frontend build artifacts ===
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
+
+# === Replay / variance runs (worktrees; runtime, like parallel_runs) ===
+replays/
+dashboard/frontend/*.tsbuildinfo

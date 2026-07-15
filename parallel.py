@@ -20,7 +20,7 @@ Tracking
   (``<run>/archives/agent_XX/experiments.jsonl``).
 * This orchestrator polls those archives and prints a **live leaderboard**, then
   writes ``<run>/leaderboard.json`` + merged ``all_experiments.jsonl`` and points
-  you at ``python dashboard.py --parallel <run>``.
+  you at the dashboard app (see dashboard/README.md).
 
 Usage
 -----
@@ -266,7 +266,7 @@ def main() -> None:
           f"best {summary['metric']}={summary['best']['best'] if summary['best'] else '—'}")
     print(f"total spend: ${summary['total_cost']:.4f}")
     print(f"\nrun dir: {run_dir}")
-    print(f"dashboard: python dashboard.py --parallel {run_dir}")
+    print("dashboard: python dashboard/backend/app.py  ->  http://localhost:8000 (Population tab)")
 
 
 if __name__ == "__main__":

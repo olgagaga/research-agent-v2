@@ -30,7 +30,8 @@ keeping good changes as git commits and reverting regressions.
 - **`history/sessions.jsonl`** — one line per run (session id, model, task, start).
 - `model_dir/logs.md` — the agent's *working* memory (can be reset; not the source
   of truth). `model_dir` git log — one commit per kept experiment.
-- `dashboard.html` — visual snapshot (regenerate with `python dashboard.py`).
+- **Dashboard** — `python dashboard/backend/app.py` → http://localhost:8000
+  (FastAPI + React; Solo + Population views, reads `history/`).
 
 ---
 
@@ -128,6 +129,33 @@ keeping good changes as git commits and reverting regressions.
   total budget** (does breadth beat depth?), plus a "breed from top-2" second
   round. Also: 2 iters is too few to conclude — scale to N=8 × 10 iters. LLM rate
   limit (not CPU) is the binding constraint at higher N.
+
+### 2026-07-15 — Repo restructure + real dashboard (FastAPI + React)
+- The single-file static HTML generator had outgrown itself (data logic, styling
+  and JS all tangled in one Python file). Replaced with a proper web app and gave
+  the repo a real architecture.
+- **Layout now:** `agent/` (library) · `dashboard/{backend,frontend}` ·
+  `history/` (durable data) · `model_dir/` (working dir) · `docs/` · `tests/` ·
+  `main.py` / `parallel.py` (entry points). Deleted the dead `a/` prototype and
+  the empty `context/` leftovers.
+- **The key boundary:** `agent/` never imports the dashboard; the dashboard never
+  imports the loop. They meet only at `history/` (append-only JSONL). Extracted
+  all run-data reading into **`agent/analytics.py`** — one source of truth for the
+  API (and anything else). The backend is pure routing.
+- **Backend** (`dashboard/backend/app.py`): FastAPI serving `/api/{config,
+  sessions,solo,parallel,parallel/{name}}`, plus the built SPA at `/` in prod
+  (single server, no node needed after one build). CORS for the Vite dev server.
+- **Frontend** (`dashboard/frontend`): React + Vite + TS. Two views (Solo,
+  Population), live polling every 5 s (pausable), light/dark, session/run pickers.
+  **No chart library** — hand-rolled SVG components → 160 kB JS / **51 kB gzipped**.
+  Keeps the deps small and the aesthetic consistent with the old telemetry look.
+- **Verified:** `tsc -b && vite build` clean; backend serves API + SPA together
+  with real data (12 experiments, best 0.7938; the 3-agent demo population).
+- **Learning:** the static exporter was the right call at v0 (zero deps, shareable
+  artifact) and the wrong one by v1 — once you want session pickers, live updates
+  and multiple views, "regenerate a file" stops being a UI. The rewrite was cheap
+  precisely because the data layer was already clean (JSONL archive), which is the
+  real lesson: **stable data contract first, presentation is then disposable.**
 
 ---
 

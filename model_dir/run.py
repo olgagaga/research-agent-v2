@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import sys
 import uuid
@@ -64,6 +65,10 @@ def load_config() -> dict:
     cfg.setdefault("batch_size", 256)
     cfg.setdefault("seed", 0)
     cfg["epochs"] = int(min(cfg["epochs"], 200))  # cheap-agent guardrail
+    # SEED env wins over config.yaml. config.yaml is an agent-editable seam, so
+    # the seed is reachable by the agent; pinning it here lets replay.py reseed a
+    # fixed pipeline (to measure run-to-run variance) without touching the commit.
+    cfg["seed"] = int(os.environ.get("SEED", cfg["seed"]))
     return cfg
 
 
@@ -142,10 +147,21 @@ def main() -> int:
             best_test = float(average_precision_score(ds.y_test, predict_proba(net, Xte_t)))
         log.info("epoch %3d  val/auprc=%.4f  best=%.4f", epoch, val_auprc, best_val)
 
+    # Final-epoch scores, i.e. with no epoch selection applied. Reported next to
+    # the best-epoch numbers so the val→test gap can be split into its two
+    # sources: picking the epoch on val, and picking the experiment on val.
+    final_val = val_auprc
+    final_test = float(average_precision_score(ds.y_test, predict_proba(net, Xte_t)))
+
     # --- write metrics (tracker-agnostic) -----------------------------------
+    # Only TARGET_METRIC is ever surfaced to the agent (see orchestrator's
+    # feedback string / logs.md). test/* stays out of its context by
+    # construction — that is what makes it a valid held-out measurement.
     metrics = {
         "val/auprc": best_val,
         "test/auprc": best_test,
+        "val/auprc_final": final_val,
+        "test/auprc_final": final_test,
         "val/loss": last_val_loss,
         "pos_rate": ds.pos_rate,
     }
