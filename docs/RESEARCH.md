@@ -154,9 +154,22 @@ one seed and an irreversible commit decision is made from it.
   decision quality per CPU-second?
 
 **Controls (without these, "the agent works" is unfalsifiable)**
-- **Random-edit arm.** Pick a random lever, apply a random edit from a fixed menu,
-  same budget. With only 4 levers and one dominant (loss), random may do
-  embarrassingly well — and 3 real improvements in 10 tries is a low bar to beat.
+- ~~**Random-edit arm.**~~ **— RUN (2026-07-15), and the prediction was right.**
+  `PROPOSER=random` (21-edit menu, same 4 levers, `sweep.py --trials 5 -n 8`):
+  **llm 0.7643 ± 0.0281 ($0.19) vs random 0.7571 ± 0.0412 ($0.00)** — diff +0.007,
+  **Welch t = 0.33, indistinguishable from zero**; random's best trial (0.8159)
+  beat the LLM's (0.7833). "With only 4 levers and one dominant, random may do
+  embarrassingly well" — it did. **Caveat that bounds the claim:** the menu is
+  *curated*, so this tests *choice within an expert action space*, not the LLM's
+  ability to construct one. Still open, and now the sharpest question in the repo:
+  - **De-curated menu.** Add junk options + wide hyperparameter ranges. If the LLM
+    wins there, its value is **filtering** a noisy space — a real, testable claim.
+    If it still ties, the harness is the product.
+  - **Bigger action space.** 4 levers is where random shines; directed search
+    should pay only when the space is too large to sample. Needs §6.6 (task as
+    data) to test on anything else.
+  - **Replay the control under seeds.** Both arms are single-seed val maxima, so
+    the +0.007 gap may be entirely inside σ ≈ 0.015.
 - **Ceiling reference.** A tuned `HistGradientBoostingClassifier` on the same
   split. We have a floor (0.363 val / 0.249 test) but **no ceiling**, so 0.774 /
   0.650 has no scale. Needed to normalise across tasks:

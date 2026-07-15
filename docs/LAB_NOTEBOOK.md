@@ -27,6 +27,13 @@ because its keep/revert rule fires at `Δ > 0` on a single-seed estimate whose
 dominates" result. All three are single-seed artifacts; the 2026-07-15 entry
 records why.
 
+**Also do not quote the agent's gains as evidence the LLM works.** The control
+(2026-07-15, `sweep.py --vary PROPOSER=llm,random`) found **no detectable
+advantage over random search** on the same action space: llm 0.7643 ± 0.0281 vs
+random 0.7571 ± 0.0412 (n=5, Welch t = 0.33), at $0.19 vs $0.00. Until that is
+overturned on a larger action space, the defensible claim is about the **harness**
+(surgical edits + keep/revert ratchet + cheap eval loop), not about the model.
+
 ---
 
 ## Data (where the evidence lives)
@@ -268,11 +275,59 @@ other claim is denominated in, and it cost $0 and 6 minutes to obtain.
 
 ---
 
+### 2026-07-15 — THE CONTROL: the LLM does not beat random search (n=5, 1 task)
+- Built `agent/proposers.py`: the loop is held fixed and only the *source of
+  proposals* varies (`PROPOSER=llm|random`), so the control is a config value, not
+  a fork. `RandomProposer` draws uniformly from a **21-edit menu** spanning the
+  same four levers, costs $0, and is reproducible from `AGENT_SEED`. All 21 edits
+  were dry-run against the baseline before spending anything (21/21 apply+parse).
+- **First real sweep** (`sweep.py --vary PROPOSER=llm,random --trials 5 -n 8
+  --base 8e1f1e5`), equal budget of 8 experiments per run:
+
+  | arm | best val/AUPRC (mean ± sd, n=5) | best single trial | cost |
+  |-----|-------------------------------|-------------------|------|
+  | `llm` (gpt-5-mini) | **0.7643 ± 0.0281** | 0.7833 | **$0.193** |
+  | `random` (curated menu) | **0.7571 ± 0.0412** | **0.8159** | **$0.000** |
+
+  diff **+0.0073**, SE 0.0223 → **Welch t = 0.33**. The LLM's advantage is **0.33
+  SE — indistinguishable from zero**, and random's *best* trial beat the LLM's
+  best trial. At this budget, on this task, **we cannot detect that the LLM's
+  choices add anything over uniform sampling of the same action space** — and the
+  LLM costs $0.19 to random's $0.00.
+
+- **What this does NOT say.** Three confounds, stated plainly because they bound
+  the claim:
+  1. **The menu is curated by me.** It contains mostly *good* options (pos_weight,
+     focal, Adam, AdamW+cosine, standardisation, quadratic features). So "random"
+     is random search over an **expert-designed action space**, not a dumb
+     baseline. The honest reading: *the LLM's value is not in choosing among these
+     levers* — the knowledge is already in the menu (and, for the LLM arm, in the
+     4 levers + wiki we hand it).
+  2. **The action space is tiny** — 4 levers, one dominant (loss). RESEARCH.md §4
+     predicted this exact outcome ("with only 4 levers and one dominant, random may
+     do embarrassingly well"). A bigger space is where directed search should pay.
+  3. **These are single-seed val maxima**, so both arms are inflated by the same
+     selection-on-noise effect `replay.py` measured (σ ≈ 0.015). The comparison is
+     fair (both arms equally inflated) but the *levels* are not trustworthy.
+- **Why it matters anyway:** for the first time a claim about the system is
+  *falsifiable*, and the first thing it did was falsify the implicit one. Every
+  "the agent works" statement in this repo was, until today, confounded with the
+  harness: fixed epochs + keep/revert ratchet + a 4-lever space. That scaffolding
+  — not the model — appears to be doing most of the work here.
+- **Next, in order:** (a) replay both arms' winners under R seeds — if the ranking
+  is noise, even this comparison is a mirage; (b) *de-curate* the menu (add junk
+  options, wider hyperparameter ranges) — if the LLM wins there, its value is
+  *filtering*, which is a real and testable claim; (c) more trials + a task with a
+  larger action space.
+
+---
+
 ## Open threads
 See `RESEARCH.md` for the full backlog. Near-term:
-- **Apparatus is in (§6); now use it:** the first real sweep should be the control
-  arm (`PROPOSER=llm` vs `random`) — until that runs, "the agent works" is
-  unfalsifiable. Needs `agent/proposers.py`.
+- **Replay the control's winners under seeds** — the control compares single-seed
+  val maxima; σ ≈ 0.015 may swamp the +0.007 gap entirely.
+- **De-curated / wider menu.** The current control tests "choice within an expert
+  menu". The sharper question is whether the LLM *filters* a noisy action space.
 - **Fix the loop's decision rule** (from `replay.py`): R-seed averaged evaluation
   + a real commit gate (Δ > k·SE, not Δ > 0). Then R=1 vs R=5 at equal LLM budget.
 - **Stopping**: the agent plateaued at step 6 and paid for 4 more experiments. Can

@@ -39,6 +39,7 @@ from agent.editor import EditError, apply_edits
 from agent.git_manager import execute_git_protocol, reset_on_failure
 from agent.llm import LLMClient
 from agent.logs_manager import append_log_entry, read_logs
+from agent.proposers import make_proposer
 from agent.schemas import ExperimentPlan, FileEdits
 from agent.tracker import RunResult, Tracker, make_tracker
 
@@ -287,7 +288,10 @@ def run_loop(
     if not md.exists():
         raise FileNotFoundError(f"Model directory does not exist: {md}")
 
-    llm = llm or LLMClient(api_key=None)
+    # Where experiments come from. The loop below is held FIXED across proposers,
+    # so PROPOSER=random is a true control arm (RESEARCH.md §4 "Controls").
+    # An injected client (tests) always wins over config.
+    proposer = make_proposer(llm)
     tracker: Tracker = make_tracker(
         config.TRACKER,
         runs_dir=config.RUNS_DIR,
@@ -322,7 +326,7 @@ def run_loop(
     last = {"cost": 0.0, "in": 0, "out": 0, "cached": 0}
 
     def capture_usage() -> None:
-        u = getattr(llm, "last_usage", {}) or {}
+        u = getattr(proposer, "last_usage", {}) or {}
         c = float(u.get("cost", 0.0) or 0.0)
         i = int(u.get("prompt_tokens", 0) or 0)
         o = int(u.get("completion_tokens", 0) or 0)
@@ -365,20 +369,16 @@ def run_loop(
         # working tree and continues, so one bad turn never aborts the run
         # (max_iterations is always honoured).
         try:
-            # Step 1-2: build context + call LLM -----------------------------
-            messages = build_context(md, feedback)
-            feedback = None
+            # Step 1-2: propose the next experiment (LLM, or the random control)
             try:
-                plan: ExperimentPlan = llm.chat_structured(
-                    messages=messages,
-                    response_format=ExperimentPlan,
-                    model=config.LLM_MODEL,
-                    reasoning_effort=config.REASONING_EFFORT,
-                )
+                plan: ExperimentPlan = proposer.propose(md, feedback)
             except Exception as exc:
-                log.exception("LLM call failed")
+                log.exception("Proposer failed")
+                # NOTE: no `finally: feedback = None` here — finally runs after
+                # except and would wipe this error feedback before the retry.
                 feedback = f"The previous call failed ({exc}). Return valid ExperimentPlan JSON."
                 continue
+            feedback = None  # consumed by the proposal above
             capture_usage()  # accumulate token/cost spend for this call
 
             target = plan.edits[0].filename if plan.edits else "?"
